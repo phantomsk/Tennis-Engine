@@ -5,7 +5,14 @@ from PIL import Image, ImageDraw
 from streamlit_image_coordinates import streamlit_image_coordinates
 
 from tennis.core.config import STORAGE
-from tennis.cv.court_calibration import CORNER_LABELS, compute_homography, serialize_calibration
+from tennis.cv.court_calibration import (
+    POINT_LABELS,
+    CalibrationError,
+    compute_homography,
+    court_lines_px,
+    serialize_calibration,
+    validate_calibration,
+)
 from tennis.cv.video_loader import extract_first_frame
 from tennis.db.database import SessionLocal, init_db
 from tennis.db.models import Job
@@ -29,13 +36,16 @@ def _cached_first_frame(video_bytes: bytes):
     return extract_first_frame(video_bytes)
 
 
-def _draw_markers(frame_rgb, points) -> Image.Image:
+def _draw_markers(frame_rgb, points, lines=None, bad_points=()) -> Image.Image:
     image = Image.fromarray(frame_rgb).convert("RGB")
     draw = ImageDraw.Draw(image)
+    for (a, b) in (lines or {}).values():
+        draw.line((a, b), fill="cyan", width=2)
     radius = 8
-    for i, (x, y) in enumerate(points, start=1):
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline="lime", width=3)
-        draw.text((x + radius + 2, y - radius), str(i), fill="lime")
+    for i, (x, y) in enumerate(points):
+        color = "red" if i in bad_points else "lime"
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=color, width=3)
+        draw.text((x + radius + 2, y - radius), str(i + 1), fill=color)
     return image
 
 
@@ -47,15 +57,18 @@ if uploaded is not None:
         st.session_state.job_id = job.id
         st.session_state.upload_file_id = uploaded.file_id
         st.session_state.calib_points = []
+        st.session_state.saved_calibration = None
 
     job_id = st.session_state.job_id
     calib_points = st.session_state.calib_points
 
     st.subheader("Court calibration")
 
-    if len(calib_points) < 4:
-        st.info(f"Click the **{CORNER_LABELS[len(calib_points)]}**.")
-        frame_rgb = _cached_first_frame(uploaded.getvalue())
+    calibration_ok = False
+    frame_rgb = _cached_first_frame(uploaded.getvalue())
+
+    if len(calib_points) < len(POINT_LABELS):
+        st.info(f"Point {len(calib_points) + 1}/{len(POINT_LABELS)}: click the **{POINT_LABELS[len(calib_points)]}**.")
         marked_image = _draw_markers(frame_rgb, calib_points)
         value = streamlit_image_coordinates(
             marked_image,
@@ -66,18 +79,49 @@ if uploaded is not None:
             scale = frame_rgb.shape[1] / 700
             st.session_state.calib_points.append((value["x"] * scale, value["y"] * scale))
             st.rerun()
+        if calib_points and st.button("Undo last point"):
+            st.session_state.calib_points = calib_points[:-1]
+            st.rerun()
     else:
-        homography = compute_homography(calib_points)
-        STORAGE.write_artifact(job_id, "CALIBRATION", serialize_calibration(calib_points, homography))
+        try:
+            homography = compute_homography(calib_points)
+        except CalibrationError as exc:
+            st.error(str(exc))
+            homography = None
 
-        frame_rgb = _cached_first_frame(uploaded.getvalue())
-        st.image(_draw_markers(frame_rgb, calib_points), width=700)
-        st.success("Court calibrated.")
+        if homography is not None:
+            check = validate_calibration(calib_points, homography)
+            st.image(
+                _draw_markers(frame_rgb, calib_points, court_lines_px(homography), check.bad_points),
+                width=700,
+                caption="Cyan lines are projected from your clicks -- they should sit on the real court lines.",
+            )
+            st.caption(f"Reprojection error: {check.rms_px:.2f}px RMS, sideline bow {check.sideline_bow_px:.1f}px")
+            for issue in check.issues:
+                st.error(issue)
+
+            col_near, col_far, col_me = st.columns(3)
+            near_hand = col_near.selectbox("Near player hand", ["right", "left"], key=f"near_hand_{job_id}")
+            far_hand = col_far.selectbox("Far player hand", ["right", "left"], key=f"far_hand_{job_id}")
+            user_side = col_me.selectbox("Which player are you?", ["near", "far"], key=f"user_side_{job_id}")
+
+            if check.ok:
+                calibration_ok = True
+                data = serialize_calibration(
+                    calib_points, homography, check, {"near": near_hand, "far": far_hand}, user_side
+                )
+                # Write only when something changed: rewriting identical bytes on
+                # every rerun would churn the artifact for no reason.
+                if st.session_state.get("saved_calibration") != data:
+                    STORAGE.write_artifact(job_id, "CALIBRATION", data)
+                    st.session_state.saved_calibration = data
+                st.success("Court calibrated.")
+
         if st.button("Recalibrate"):
             st.session_state.calib_points = []
             st.rerun()
 
-    if len(calib_points) == 4 and st.button("Run analysis"):
+    if calibration_ok and st.button("Run analysis"):
         progress_bar = st.progress(0.0, text="Starting...")
 
         def on_progress(stage: str) -> None:
