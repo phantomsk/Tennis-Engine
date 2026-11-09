@@ -8,6 +8,7 @@ class Storage(Protocol):
     def write_artifact(self, job_id: str, stage: str, data: bytes) -> str: ...
     def read_artifact(self, job_id: str, stage: str) -> bytes: ...
     def write_upload(self, job_id: str, data: bytes) -> str: ...
+    def read_upload(self, job_id: str) -> bytes: ...
 
 
 class LocalStorage:
@@ -34,6 +35,10 @@ class LocalStorage:
         path = self._job_dir(job_id) / "upload.mp4"
         path.write_bytes(data)
         return str(path)
+
+    def read_upload(self, job_id: str) -> bytes:
+        path = self._job_dir(job_id) / "upload.mp4"
+        return path.read_bytes()
 
 
 # class S3Storage(Storage): ...   # scale-up, same interface

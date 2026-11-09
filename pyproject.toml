@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "opencv-python-headless>=5.0.0.93",
     "pydantic-settings>=2.14.2",
     "sqlalchemy>=2.0.51",
     "streamlit>=1.59.2",
+    "streamlit-image-coordinates>=0.4.0",
 ]
 
 [dependency-groups]
