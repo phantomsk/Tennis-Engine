@@ -16,8 +16,6 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Callable
-
 from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
@@ -29,8 +27,7 @@ log = logging.getLogger(__name__)
 
 LEASE = timedelta(minutes=30)
 ACTIVE = ("QUEUED", "RUNNING")
-
-ProgressCallback = Callable[[str], None]
+MAX_ATTEMPTS = 2  # one automatic retry for transient errors, then FAILED until the user retries
 
 
 def utcnow() -> datetime:
@@ -212,18 +209,30 @@ def stage_rows(db: Session, job_id: str) -> list[JobStage]:
     return [rows[n] for n in ORDER if n in rows]
 
 
-def run_pipeline(job_id: str, db: Session, progress: ProgressCallback | None = None) -> None:
-    """Synchronous drain of the in-process queue (explicit Run/Retry)."""
-    schedule(db, job_id, retry_failed=True)
+def start_job(db: Session, job_id: str) -> list[str]:
+    """Explicit Run/Retry from the UI: enqueue what needs running and return immediately."""
+    return schedule(db, job_id, retry_failed=True)
 
-    def handler(msg_job_id: str, msg_stage: str) -> None:
-        try:
-            ran = handle_stage(db, msg_job_id, msg_stage)
-        except Exception:
-            log.exception("Stage %s failed for job %s", msg_stage, msg_job_id)
-            return
-        if ran and progress:
-            progress(msg_stage)
 
-    while QUEUE.process_next(handler):
-        pass
+def process_message(db: Session, msg) -> None:
+    """Handle one queue message with SQS-style ack/nack semantics."""
+    try:
+        handle_stage(db, msg.job_id, msg.stage)
+    except Exception as exc:
+        log.exception("Stage %s failed for job %s (attempt %d)", msg.stage, msg.job_id, msg.attempts)
+        if msg.attempts >= MAX_ATTEMPTS:
+            QUEUE.ack(msg)  # give up: the stage stays FAILED until the user retries
+        else:
+            QUEUE.nack(msg, f"{type(exc).__name__}: {exc}")
+        return
+    QUEUE.ack(msg)
+
+
+def run_pipeline(job_id: str, db: Session) -> None:
+    """Start a job and drain the queue in this process (tests, benchmarks, CLI).
+
+    The app never calls this: it calls start_job() and the worker subprocess drains.
+    """
+    start_job(db, job_id)
+    while (msg := QUEUE.receive(int(LEASE.total_seconds()))) is not None:
+        process_message(db, msg)

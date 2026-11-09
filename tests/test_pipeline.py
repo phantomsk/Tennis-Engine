@@ -126,7 +126,7 @@ def test_a_failing_stage_marks_the_job_failed_and_retry_resumes(db, video_bytes,
     assert runner.job_status(db, job.id) == "FAILED"
     row = db.get(JobStage, (job.id, "BALL_TRACKING"))
     assert "tracker exploded" in row.error
-    assert row.attempts == 1  # a failed stage is not auto-retried
+    assert row.attempts == runner.MAX_ATTEMPTS  # retried once, then left FAILED
 
     monkeypatch.setitem(runner.SPECS, "BALL_TRACKING", real)
     runner.run_pipeline(job.id, db)  # explicit Run/Retry

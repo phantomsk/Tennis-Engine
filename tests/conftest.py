@@ -22,3 +22,6 @@ def make_video_bytes(path, n_frames=5, fps=10.0, size=(64, 48)) -> bytes:
 @pytest.fixture
 def video_bytes(tmp_path) -> bytes:
     return make_video_bytes(tmp_path / "clip.mp4")
+
+# Never spawn the background worker from app tests; tests drive it directly.
+os.environ["TENNIS_WORKER"] = "external"

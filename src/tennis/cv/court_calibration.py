@@ -39,10 +39,10 @@ POINT_LABELS = [
     "Near-right baseline corner (closest to the camera, right singles sideline)",
     "Far-left baseline corner (opposite baseline, left singles sideline)",
     "Far-right baseline corner (opposite baseline, right singles sideline)",
-    "Near service line meets the LEFT singles sideline",
-    "Near service line meets the RIGHT singles sideline",
-    "Far service line meets the LEFT singles sideline",
-    "Far service line meets the RIGHT singles sideline",
+    "Where the near service line meets the LEFT singles sideline",
+    "Where the near service line meets the RIGHT singles sideline",
+    "Where the far service line meets the LEFT singles sideline",
+    "Where the far service line meets the RIGHT singles sideline",
 ]
 
 MAX_RMS_PX = 3.0

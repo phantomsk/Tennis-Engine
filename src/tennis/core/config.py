@@ -2,7 +2,7 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings
 
-from tennis.core.queue import InProcessQueue
+from tennis.core.queue import SqliteQueue
 from tennis.core.storage import LocalStorage
 
 
@@ -16,4 +16,4 @@ class Settings(BaseSettings):
 settings = Settings()
 
 STORAGE = LocalStorage(settings.artifacts_dir)  # swap to S3Storage() later
-QUEUE = InProcessQueue()  # swap to SqsQueue() later
+QUEUE = SqliteQueue(settings.database_url)  # swap to SqsQueue() later
