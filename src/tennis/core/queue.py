@@ -27,5 +27,8 @@ class InProcessQueue:
         handler(job_id, stage)
         return True
 
+    def clear(self) -> None:
+        self._messages.clear()
+
 
 # class SqsQueue(JobQueue): ...   # scale-up, same interface
